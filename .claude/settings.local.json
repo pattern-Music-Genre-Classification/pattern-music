@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(/c/ProgramData/anaconda3/python.exe \"d:/patt/project/pattern-music/data prep/patch_notebook.py\")",
+      "Bash(/c/ProgramData/anaconda3/python.exe -c ':*)"
+    ]
+  }
+}

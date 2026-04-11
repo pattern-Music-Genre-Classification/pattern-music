@@ -206,15 +206,18 @@ BATCH SHAPE VERIFICATION:
 ปัญหาปัจจุบัน: ทุก epoch ต้อง decode mp3 ทุกไฟล์ใหม่ → GPU idle รอ CPU → training ช้ามาก
 เป้าหมาย: Extract features ครั้งเดียว save เป็น .pt files → training เร็วขึ้น 10-50x
 
-เขียน Python script (ทั้ง .py และ .ipynb) ที่ทำ:
+เขียน .ipynb notebook ที่ทำ:
 
 ### 1. PRE-EXTRACTION SCRIPT
 - อ่าน `output/cleaned_metadata.csv` (ถ้ามี) หรือ load จาก tracks.csv
 - Import `extract_tabular_features` และ `extract_mel_spectrogram` จาก `fma_phase1a_data_pipeline.py`
 - วนทุก track: load mp3 → extract chunk → extract ทั้ง tabular (88,) และ mel (1,128,130)
 - Apply scaling: ใช้ `output/tabular_scaler.pkl` สำหรับ tabular, ใช้ `output/scaling_stats.json` สำหรับ mel normalization
+- **Save เป็น float16** เพื่อลด disk ~50%: `tabular.to(torch.float16)`, `mel.to(torch.float16)`
 - Save แต่ละ track เป็น .pt file ที่มี dict: {'tabular': tensor(88,), 'mel': tensor(1,128,130), 'label': int, 'track_id': int}
 - Directory structure: `output/pt_features/{split}/track_{track_id:06d}.pt`
+- **ใช้ `concurrent.futures.ProcessPoolExecutor`** (ไม่ใช่ ThreadPool) เพราะ librosa FFT/mel extraction เป็น CPU-bound → GIL จะ block threading
+- **⚠️ Windows: ProcessPoolExecutor ต้องอยู่ภายใต้ `if __name__ == '__main__':` เสมอ**
 - แสดง progress bar (tqdm), log errors, skip corrupted tracks
 - สรุปจำนวน tracks ที่ extract สำเร็จ/ล้มเหลว per split
 
@@ -225,17 +228,19 @@ BATCH SHAPE VERIFICATION:
 
 ### 3. FAST PYTORCH DATASET (PreExtractedFMADataset)
 - Dataset class ที่ load .pt files แทน mp3
-- __getitem__ แค่ `torch.load()` + apply augmentation (training only)
-- Augmentation ทำบน tensor โดยตรง:
-  - SpecAugment (frequency + time masking) บน mel spectrogram — p=0.5
-  - Gaussian noise บน mel spectrogram — p=0.3
+- __getitem__: `torch.load()` → `.to(torch.float32)` (convert float16 กลับ) → apply augmentation (training only)
+- **Augmentation ทำบน NORMALIZED tensor** (data ถูก scale แล้ว mean≈0, std≈1):
+  - SpecAugment: mask ด้วย **0.0** (ไม่ต้องคำนวณ mean สดๆ เพราะ 0.0 = mean ของ normalized data)
+  - Gaussian Noise: ใช้ **`torch.randn_like(mel) * noise_std`** โดย noise_std สุ่มจาก 0.05-0.15 (ไม่ต้องคำนวณ SNR เพราะ data normalized แล้ว)
   - สำหรับ tabular: ไม่ augment
-- Val/Test: ไม่มี augmentation
+- Val/Test: ไม่มี augmentation เด็ดขาด (ต้องมี `if self.augment:` guard)
 
 ### 4. TRAINING-READY DATALOADER FACTORY
 - Function `create_fast_dataloaders()` ที่ return dict ของ DataLoaders
 - Training: WeightedRandomSampler (optional, dataset balanced)
-- num_workers=4, pin_memory=True, persistent_workers=True
+- num_workers=4, pin_memory=True
+- **persistent_workers=False ใน notebook** (Windows Jupyter มีปัญหา zombie processes / RAM leak)
+- **persistent_workers=True ได้ถ้ารันเป็น .py script**
 - drop_last=True สำหรับ training
 
 ### 5. VERIFICATION BLOCK
@@ -246,7 +251,7 @@ BATCH SHAPE VERIFICATION:
 - Plot 4 sample spectrograms จาก .pt dataset
 
 ### 6. DISK SPACE ESTIMATION
-- ก่อน extract: คำนวณว่าจะใช้ disk space เท่าไหร่
+- ก่อน extract: คำนวณว่าจะใช้ disk space เท่าไหร่ (float16 จะลดเหลือ ~50%)
 - ถาม user confirm ก่อน proceed
 
 ### OUTPUT STRUCTURE
@@ -282,5 +287,10 @@ output/
 - ใช้ pathlib.Path ตลอด (Windows compatibility)
 - mel spectrogram ที่ save ต้องเป็น SCALED แล้ว (normalized ด้วย global mean/std)
 - tabular features ที่ save ต้องเป็น SCALED แล้ว (StandardScaler applied)
+- **Save เป็น float16** → load แล้ว convert กลับ float32 ก่อน train
+- **ProcessPoolExecutor** (ไม่ใช่ ThreadPool) สำหรับ parallel extraction — librosa เป็น CPU-bound
+- **Windows: ProcessPoolExecutor ต้องอยู่ใน `if __name__ == '__main__':`**
+- **persistent_workers=False ใน .ipynb** (Windows zombie process), True ได้ใน .py
+- **Augmentation บน normalized data**: SpecAugment mask=0.0, Noise=torch.randn_like * 0.05~0.15
 - Comment เป็นภาษาไทย + อังกฤษผสม (technical terms เป็นอังกฤษ)
-- ให้ output เป็นทั้ง .py (importable module) และ .ipynb (interactive notebook)
+- ให้ output เป็น .ipynb
