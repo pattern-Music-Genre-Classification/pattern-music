@@ -1,2 +1,4 @@
 FMA_Data/
 _pycache_/
+output/
+*.pkl
