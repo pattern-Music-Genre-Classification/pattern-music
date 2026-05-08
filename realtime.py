@@ -98,6 +98,15 @@ def parse_genres(raw: str | None) -> list[str] | None:
     return genres or None
 
 
+def parse_mic_device(raw: str | None) -> int | str | None:
+    if raw is None:
+        return None
+    raw = raw.strip()
+    if not raw:
+        return None
+    return int(raw) if raw.isdigit() else raw
+
+
 def read_label_map(path: str | Path | None) -> list[str] | None:
     if path is None:
         return None
@@ -1187,6 +1196,7 @@ def run_realtime(
     genres: Sequence[str],
     hop_samples: int,
     vote_windows: int,
+    mic_device: int | str | None = None,
 ) -> None:
     if sd is None:
         raise ImportError("sounddevice is not installed. Install it or run with --file.")
@@ -1220,6 +1230,7 @@ def run_realtime(
             channels=1,
             dtype="float32",
             blocksize=1024,
+            device=mic_device,
             callback=audio_callback,
         ):
             while True:
@@ -1439,6 +1450,7 @@ def main() -> None:
     parser.add_argument("--simulate-realtime", action="store_true", help="Sleep one hop between file windows.")
     parser.add_argument("--interactive", action="store_true", help="Open a simple menu to choose model and input source.")
     parser.add_argument("--list-devices", action="store_true", help="List sounddevice input devices and exit.")
+    parser.add_argument("--mic-device", help="sounddevice input device index or name for microphone mode.")
     parser.add_argument("--debug", action="store_true", help="Show full Python tracebacks for errors.")
     args = parser.parse_args()
 
@@ -1518,6 +1530,7 @@ def main() -> None:
             genres=genres,
             hop_samples=hop_samples,
             vote_windows=args.vote_windows,
+            mic_device=parse_mic_device(args.mic_device),
         )
 
 
