@@ -1,0 +1,20 @@
+# Core realtime pipeline
+numpy
+torch
+torchaudio
+soundfile
+sounddevice
+
+# ONNX model support
+onnxruntime
+
+# Needed for EfficientNet/timm full-model checkpoints
+timm
+torchvision
+
+# Needed for ASTForAudioClassification checkpoints
+transformers
+
+# Used by data preparation scripts
+pandas
+scikit-learn

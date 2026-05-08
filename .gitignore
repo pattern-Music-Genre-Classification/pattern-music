@@ -1,0 +1,41 @@
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# Local environments and secrets
+.env
+.env.*
+!.env.example
+.venv/
+venv/
+env/
+
+# Model/checkpoint artifacts
+models/*.pt
+models/*.pth
+models/*.ckpt
+models/*.onnx
+models/*.onnx.data
+models/*.safetensors
+models/*.bin
+checkpoints/
+cache_local/
+runs/
+wandb/
+
+# Local demo songs uploaded by each user
+songs/
+
+# Training artifacts
+*.npy
+*.npz
+*.pkl
+*.joblib
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
