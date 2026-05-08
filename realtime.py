@@ -287,6 +287,150 @@ class SpecAugCnn(nn.Module):
         return self.classifier(x)
 
 
+class CrnnGenreClassifier(nn.Module):
+    def __init__(
+        self,
+        num_classes: int = 8,
+        hidden_size: int = 256,
+        num_layers: int = 2,
+        dropout: float = 0.3,
+    ) -> None:
+        super().__init__()
+        self.cnn = nn.Sequential(
+            ConvBnRelu(1, 32),
+            nn.MaxPool2d(2),
+            ConvBnRelu(32, 64),
+            nn.MaxPool2d(2),
+            ConvBnRelu(64, 128),
+            nn.MaxPool2d(2),
+            ConvBnRelu(128, 128),
+            nn.MaxPool2d(2),
+        )
+        self.gru = nn.GRU(
+            input_size=1024,
+            hidden_size=hidden_size,
+            num_layers=num_layers,
+            batch_first=True,
+            bidirectional=True,
+            dropout=dropout if num_layers > 1 else 0.0,
+        )
+        self.classifier = nn.Sequential(
+            nn.Linear(hidden_size * 2, 256),
+            nn.ReLU(inplace=True),
+            nn.Dropout(dropout),
+            nn.Linear(256, num_classes),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.cnn(x)
+        x = x.permute(0, 3, 1, 2).flatten(2)
+        x, _ = self.gru(x)
+        x = x.mean(dim=1)
+        return self.classifier(x)
+
+
+class ResidualBlock(nn.Module):
+    def __init__(self, in_channels: int, out_channels: int, stride: int = 1) -> None:
+        super().__init__()
+        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=stride, padding=1, bias=False)
+        self.bn1 = nn.BatchNorm2d(out_channels)
+        self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1, bias=False)
+        self.bn2 = nn.BatchNorm2d(out_channels)
+        if stride != 1 or in_channels != out_channels:
+            self.skip = nn.Sequential(
+                nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=stride, bias=False),
+                nn.BatchNorm2d(out_channels),
+            )
+        else:
+            self.skip = nn.Identity()
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        residual = self.skip(x)
+        x = F.relu(self.bn1(self.conv1(x)), inplace=True)
+        x = self.bn2(self.conv2(x))
+        return F.relu(x + residual, inplace=True)
+
+
+class SmallResNetGenreClassifier(nn.Module):
+    def __init__(self, num_classes: int = 8, dropout: float = 0.3) -> None:
+        super().__init__()
+        self.stem = nn.Sequential(
+            nn.Conv2d(1, 32, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(32),
+            nn.ReLU(inplace=True),
+        )
+        self.stage1 = nn.Sequential(ResidualBlock(32, 32), ResidualBlock(32, 32))
+        self.stage2 = nn.Sequential(ResidualBlock(32, 64, stride=2), ResidualBlock(64, 64))
+        self.stage3 = nn.Sequential(ResidualBlock(64, 128, stride=2), ResidualBlock(128, 128))
+        self.stage4 = nn.Sequential(ResidualBlock(128, 256, stride=2), ResidualBlock(256, 256))
+        self.classifier = nn.Sequential(
+            nn.AdaptiveAvgPool2d((1, 1)),
+            nn.Flatten(),
+            nn.Linear(256, num_classes),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.stem(x)
+        x = self.stage1(x)
+        x = self.stage2(x)
+        x = self.stage3(x)
+        x = self.stage4(x)
+        return self.classifier(x)
+
+
+def build_builtin_crnn(
+    state_dict: dict[str, torch.Tensor],
+    checkpoint_config: dict[str, object] | None,
+    genres: Sequence[str] | None,
+) -> nn.Module | None:
+    crnn_keys = {
+        "cnn.0.block.0.weight",
+        "cnn.6.block.0.weight",
+        "gru.weight_ih_l0",
+        "classifier.3.weight",
+    }
+    if not crnn_keys.issubset(set(state_dict)):
+        return None
+
+    num_classes = int(state_dict["classifier.3.weight"].shape[0])
+    if genres and len(genres) == num_classes:
+        num_classes = len(genres)
+    hidden_size = int(state_dict["gru.weight_hh_l0"].shape[1])
+    num_layers = max(
+        int(key.split("_l")[1].split("_")[0])
+        for key in state_dict
+        if key.startswith("gru.weight_ih_l")
+    ) + 1
+    dropout = float(checkpoint_config.get("crnn_dropout", 0.3)) if checkpoint_config else 0.3
+    return CrnnGenreClassifier(
+        num_classes=num_classes,
+        hidden_size=hidden_size,
+        num_layers=num_layers,
+        dropout=dropout,
+    )
+
+
+def build_builtin_resnet(
+    state_dict: dict[str, torch.Tensor],
+    checkpoint_config: dict[str, object] | None,
+    genres: Sequence[str] | None,
+) -> nn.Module | None:
+    resnet_keys = {
+        "stem.0.weight",
+        "stage1.0.conv1.weight",
+        "stage4.1.conv2.weight",
+        "classifier.2.weight",
+    }
+    if not resnet_keys.issubset(set(state_dict)):
+        return None
+
+    num_classes = int(state_dict["classifier.2.weight"].shape[0])
+    if genres and len(genres) == num_classes:
+        num_classes = len(genres)
+    dropout = float(checkpoint_config.get("cnn_dropout", 0.3)) if checkpoint_config else 0.3
+    return SmallResNetGenreClassifier(num_classes=num_classes, dropout=dropout)
+
+
 def build_builtin_model(
     state_dict: dict[str, torch.Tensor],
     checkpoint_config: dict[str, object] | None,
@@ -302,7 +446,12 @@ def build_builtin_model(
         "classifier.4.weight",
     }
     if not specaug_keys.issubset(keys):
-        return build_builtin_mobilenet_v2(state_dict, genres) or build_builtin_ast(state_dict, genres)
+        return (
+            build_builtin_mobilenet_v2(state_dict, genres)
+            or build_builtin_ast(state_dict, genres)
+            or build_builtin_crnn(state_dict, checkpoint_config, genres)
+            or build_builtin_resnet(state_dict, checkpoint_config, genres)
+        )
 
     if checkpoint_config and "num_classes" in checkpoint_config:
         num_classes = int(checkpoint_config["num_classes"])
@@ -568,7 +717,9 @@ def load_onnx_backend(path: Path) -> OnnxBackend:
     if "CUDAExecutionProvider" in available:
         providers.insert(0, "CUDAExecutionProvider")
 
-    session = ort.InferenceSession(str(path), providers=providers)
+    session_options = ort.SessionOptions()
+    session_options.log_severity_level = 4
+    session = ort.InferenceSession(str(path), sess_options=session_options, providers=providers)
     input_name = session.get_inputs()[0].name
     return OnnxBackend(path=path, session=session, input_name=input_name)
 

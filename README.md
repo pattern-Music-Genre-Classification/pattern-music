@@ -760,6 +760,83 @@ python realtime.py --model "models\model_a.pt" --model "models\model_b.pt" --fil
 python realtime.py --list-devices
 ```
 
+## Benchmark เพื่อเลือก model สำหรับ realtime
+
+ถ้าต้องการเปรียบเทียบหลายโมเดลใน `models/` กับเพลงเดียวใน `songs/` ให้ใช้ไฟล์:
+
+```text
+benchmark_realtime_models.py
+```
+
+รันแบบเมนู:
+
+```powershell
+python benchmark_realtime_models.py
+```
+
+โปรแกรมจะให้เลือกหลายโมเดลได้ เช่น:
+
+```text
+all
+1,3,4
+2-5
+```
+
+จากนั้นเลือกเพลง 1 เพลงจาก `songs/` แล้วโปรแกรมจะประมวลผลทีละโมเดล และสรุปผลเป็นตาราง เช่น:
+
+```text
+Model
+Final genre
+Windows processed
+Avg inference time
+P95 inference time
+Max inference time
+RTL
+P95 RTL
+Ready
+Top probability
+```
+
+นิยาม RTL ใน benchmark:
+
+```text
+RTL = average_inference_time / hop_time
+```
+
+ถ้า:
+
+```text
+RTL < 1
+```
+
+แปลว่าโมเดลประมวลผลทัน realtime ตาม hop ที่ตั้งไว้
+
+ตัวอย่าง benchmark ทุกโมเดล:
+
+```powershell
+python benchmark_realtime_models.py --models all --file "000002.mp3"
+```
+
+ถ้าอยากเทสเร็ว ๆ แค่ไม่กี่ windows:
+
+```powershell
+python benchmark_realtime_models.py --models all --file "000002.mp3" --max-windows 3
+```
+
+ถ้าอยากเลือกเฉพาะบางโมเดล:
+
+```powershell
+python benchmark_realtime_models.py --models "cnn_specaug_best.pt,pond_best.pt,resnet_specaug_best.pt" --file "000002.mp3"
+```
+
+ถ้าอยาก export ผลเป็น CSV:
+
+```powershell
+python benchmark_realtime_models.py --models all --file "000002.mp3" --csv benchmark_results.csv
+```
+
+หมายเหตุ: `deep_cnn2d.onnx` เป็น ONNX เก่าที่ input shape ไม่ตรงกับ window 15 วินาที จึงอาจ fail ใน benchmark ปกติ ส่วน `ast_fma_best.pt` ใช้ได้แต่บน CPU จะช้ากว่าโมเดลอื่นมาก
+
 ## Dependencies
 
 ควรใช้งานใน Python environment ที่มี package เหล่านี้:
