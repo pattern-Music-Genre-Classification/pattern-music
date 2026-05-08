@@ -1125,12 +1125,20 @@ def run_from_file(
     vote_windows: int,
     include_tail: bool,
     simulate_realtime: bool,
+    play_audio: bool,
     true_genre: str | None,
 ) -> None:
     audio = load_audio_file(file_path, preprocessor.sample_rate)
     duration = len(audio) / preprocessor.sample_rate
     print(f"[INFO] Loaded audio: {file_path}")
     print(f"[INFO] Duration: {duration:.2f}s")
+
+    if play_audio:
+        if sd is None:
+            raise ImportError("sounddevice is not installed. Install it or run without --play-audio.")
+        if not simulate_realtime:
+            simulate_realtime = True
+        sd.play(audio, samplerate=preprocessor.sample_rate, blocking=False)
 
     latest_history: list[np.ndarray] = []
     soft_history: list[np.ndarray] = []
@@ -1177,6 +1185,9 @@ def run_from_file(
 
     except KeyboardInterrupt:
         print("\n[INFO] Stopped by user.")
+    finally:
+        if play_audio and sd is not None:
+            sd.stop()
 
     print_final_summary(
         genres=genres,
@@ -1448,6 +1459,7 @@ def main() -> None:
     parser.add_argument("--device", choices=("auto", "cpu", "cuda"), default="auto")
     parser.add_argument("--no-tail", action="store_true", help="Do not add the final non-aligned file window.")
     parser.add_argument("--simulate-realtime", action="store_true", help="Sleep one hop between file windows.")
+    parser.add_argument("--play-audio", action="store_true", help="Play the audio file during file-mode inference.")
     parser.add_argument("--interactive", action="store_true", help="Open a simple menu to choose model and input source.")
     parser.add_argument("--list-devices", action="store_true", help="List sounddevice input devices and exit.")
     parser.add_argument("--mic-device", help="sounddevice input device index or name for microphone mode.")
@@ -1521,6 +1533,7 @@ def main() -> None:
             vote_windows=args.vote_windows,
             include_tail=not args.no_tail,
             simulate_realtime=args.simulate_realtime,
+            play_audio=args.play_audio,
             true_genre=args.genre,
         )
     else:
